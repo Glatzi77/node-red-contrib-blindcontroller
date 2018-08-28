@@ -68,7 +68,7 @@ module.exports = function(RED) {
    */
   function validateSunPositionMsg(node, msg) {
     var validMsg = true;
-    var sunProperty = ["sunInSky", "azimuth", "altitude"];
+    var sunProperty = ["sunInSky", "azimuth", "altitude", "startTime", "endTime"];
     var i;
 
     for (i in sunProperty) {
@@ -113,18 +113,27 @@ module.exports = function(RED) {
         );
         validMsg = false;
       }
+	  if (
+        typeof msg.payload.startTime != "number") {
+		  node.error(
+          RED._("blindcontroller.error.sunPosition.invalid-startTime") +
+            msg.payload.startTime,
+          msg
+        );
+        validMsg = false;
+      }
+	  if (
+        typeof msg.payload.endTime != "number") {
+		  node.error(
+          RED._("blindcontroller.error.sunPosition.invalid-endTime") +
+            msg.payload.endTime,
+          msg
+        );
+        validMsg = false;
+      }
+		
     }
     return validMsg;
-  }
-
-  function invalidPosition(position, increment) {
-    return (
-      position &&
-      (typeof position != "number" ||
-        position < 0 ||
-        position > 100 ||
-        position % increment != 0)
-    )
   }
 
   /*
@@ -253,7 +262,13 @@ module.exports = function(RED) {
         );
         validMsg = false;
       }
-      if (invalidPosition(msg.payload.maxopen, msg.payload.increment)) {
+      if (
+        msg.payload.maxopen &&
+        (typeof msg.payload.maxopen != "number" ||
+          msg.payload.maxopen < 0 ||
+          msg.payload.maxopen > 100 ||
+          msg.payload.maxopen % msg.payload.increment != 0)
+      ) {
         node.error(
           RED._("blindcontroller.error.blind.invalid-maxopen") +
             msg.payload.maxopen,
@@ -261,7 +276,13 @@ module.exports = function(RED) {
         );
         validMsg = false;
       }
-      if (invalidPosition(msg.payload.maxclosed, msg.payload.increment)) {
+      if (
+        msg.payload.maxclosed &&
+        (typeof msg.payload.maxclosed != "number" ||
+          msg.payload.maxclosed < 0 ||
+          msg.payload.maxclosed > 100 ||
+          msg.payload.maxclosed % msg.payload.increment != 0)
+      ) {
         node.error(
           RED._("blindcontroller.error.blind.invalid-maxclosed") +
             msg.payload.maxclosed,
@@ -305,23 +326,13 @@ module.exports = function(RED) {
         );
         validMsg = false;
       }
-      if (invalidPosition(msg.payload.cloudsthresholdposition, msg.payload.increment)) {
-        node.error(
-          RED._("blindcontroller.error.blind.invalid-cloudsthresholdposition") +
-            msg.payload.cloudsthresholdposition,
-          msg
-        );
-        validMsg = false;
-      }
-      if (invalidPosition(msg.payload.temperaturethresholdposition, msg.payload.increment)) {
-        node.error(
-          RED._("blindcontroller.error.blind.invalid-temperaturethresholdposition") +
-            msg.payload.temperaturethresholdposition,
-          msg
-        );
-        validMsg = false;
-      }
-      if (invalidPosition(msg.payload.nightposition, msg.payload.increment)) {
+      if (
+        msg.payload.nightposition &&
+        (typeof msg.payload.nightposition != "number" ||
+          msg.payload.nightposition < 0 ||
+          msg.payload.nightposition > 100 ||
+          msg.payload.nightposition % msg.payload.increment != 0)
+      ) {
         node.error(
           RED._("blindcontroller.error.blind.invalid-nightposition") +
             msg.payload.nightposition,
@@ -510,6 +521,7 @@ module.exports = function(RED) {
      * an object that casts a shadow to the specified depth. Convert this
      * height into a blind position based on the dimensions of the window
      */
+	var now = new Date();					 
     var isTemperatureAConcern =
       weather.maxtemp && blind.temperaturethreshold
         ? weather.maxtemp > blind.temperaturethreshold
@@ -518,13 +530,25 @@ module.exports = function(RED) {
       weather.clouds && blind.cloudsthreshold
         ? weather.clouds > blind.cloudsthreshold
         : false;
-    var now = new Date();
+	var	isSunRise =
+		sunPosition.startTime && sunPosition.sunInSky
+		? now > sunPosition.startTime && now < sunPosition.endTime
+		: false;
+	var	isSunSet =
+		sunPosition.startTime && !sunPosition.sunInSky
+		? now > sunPosition.startTime
+		: false;			   
+												  
+	console.log ("isSunRise:" + isSunRise + " isSunSet: " + isSunSet);		  	
 
     if (hasBlindPositionExpired(blind.blindPositionExpiry)) {
-      blind.blindPosition = blind.maxopen;
+	  if (isSunRise) {		
+		blind.blindPosition = blind.maxopen;
+	  }
+	   
       if (sunPosition.sunInSky) {
         if (isTemperatureAConcern) {
-          blind.blindPosition = blind.temperaturethresholdposition;
+          blind.blindPosition = blind.maxclosed;
           blind.blindPositionReasonCode = "07";
           blind.blindPositionReasonDesc = RED._(
             "blindcontroller.positionReason.07"
@@ -535,7 +559,7 @@ module.exports = function(RED) {
             case "Winter":
               if (blind.sunInWindow) {
                 if (isOvercast) {
-                  blind.blindPosition = blind.cloudsthresholdposition;
+                  blind.blindPosition = blind.maxclosed;
                   blind.blindPositionReasonCode = "06";
                   blind.blindPositionReasonDesc = RED._(
                     "blindcontroller.positionReason.06"
@@ -601,7 +625,6 @@ module.exports = function(RED) {
                     "blindcontroller.positionReason.03"
                   );
                 } else if (isOvercast) {
-                  blind.blindPosition = blind.cloudsthresholdposition;
                   blind.blindPositionReasonCode = "06";
                   blind.blindPositionReasonDesc = RED._(
                     "blindcontroller.positionReason.06"
@@ -620,12 +643,14 @@ module.exports = function(RED) {
           }
         }
       } else {
-        blind.blindPosition = blind.nightposition;
-        blind.blindPositionReasonCode = "02";
-        blind.blindPositionReasonDesc = RED._(
-          "blindcontroller.positionReason.02"
-        );
-        blind.sunInWindow = false;
+		if (isSunSet) {			   
+			blind.blindPosition = blind.nightposition;
+			blind.blindPositionReasonCode = "02";
+			blind.blindPositionReasonDesc = RED._(
+			  "blindcontroller.positionReason.02"
+			);
+			blind.sunInWindow = false;
+		}
       }
       if (blind.blindPositionExpiry) {
         delete blind.blindPositionExpiry;
@@ -670,6 +695,8 @@ module.exports = function(RED) {
           altitude: sunPosition.altitude,
           azimuth: sunPosition.azimuth,
           blindPosition: blinds[i].blindPosition
+									
+								
         };
         msg.topic = "blind";
         node.send(msg);
@@ -782,14 +809,6 @@ module.exports = function(RED) {
               msg.payload.nightposition,
               Number(RED._("blindcontroller.placeholder.nightposition"))
             );
-            blinds[channel].temperaturethresholdposition = defaultIfUndefined(
-              msg.payload.temperaturethresholdposition,
-              Number(RED._("blindcontroller.placeholder.temperaturethresholdposition"))
-            );
-            blinds[channel].cloudsthresholdposition = defaultIfUndefined(
-              msg.payload.cloudsthresholdposition,
-              Number(RED._("blindcontroller.placeholder.cloudsthresholdposition"))
-            );
             blinds[channel].expiryperiod = defaultIfUndefined(
               msg.payload.expiryperiod,
               Number(RED._("blindcontroller.placeholder.expiryperiod"))
@@ -865,19 +884,7 @@ module.exports = function(RED) {
         )
       ),
       temperaturethreshold: config.temperaturethreshold,
-      temperaturethresholdposition: Number(
-        defaultIfUndefined(
-          config.temperaturethresholdposition,
-          RED._("blindcontroller.placeholder.temperaturethresholdposition")
-        )
-      ),
       cloudsthreshold: config.cloudsthreshold,
-      cloudsthresholdposition: Number(
-        defaultIfUndefined(
-          config.cloudsthresholdposition,
-          RED._("blindcontroller.placeholder.cloudsthresholdposition")
-        )
-      ),
       nightposition: Number(
         defaultIfUndefined(
           config.nightposition,
